@@ -10,14 +10,18 @@ import * as a from 'arena';
 import * as utils from 'utils';
 
 const Arena = a.Arena;
-const { St } = imports.gi;
+const { Clutter, GObject, St } = imports.gi;
 
 const ACTIVE_TAB = 'pop-shell-tab pop-shell-tab-active';
 const INACTIVE_TAB = 'pop-shell-tab pop-shell-tab-inactive';
 const URGENT_TAB = 'pop-shell-tab pop-shell-tab-urgent';
 const INACTIVE_TAB_STYLE = '#9B8E8A';
 
-export var TAB_HEIGHT: number = 24
+export var DEFAULT_TAB_HEIGHT: number = 24
+
+export function calculate_tabs_height(ext: Ext): number  {
+    return ext.settings.show_stack_tab_buttons() ? DEFAULT_TAB_HEIGHT * ext.dpi : 0;
+}
 
 interface Tab {
     active: boolean;
@@ -42,6 +46,78 @@ function stack_widgets_new(): StackWidgets {
     return { tabs };
 }
 
+const ContainerButton = GObject.registerClass({
+    Signals: { 'activate': {} },
+}, class ImageButton extends St.Button {
+    _init(icon: St.Icon) {
+        super._init({
+            child: icon,
+            x_expand: true,
+            y_expand: true,
+        })
+    }
+})
+
+interface TabButton extends St.Button {
+    set_title: (title: string) => void;
+}
+
+const TabButton = GObject.registerClass({
+    Signals: { 'activate': {} },
+}, class TabButton extends St.Button {
+    _init(window: ShellWindow) {
+        const icon = window.icon(window.ext, 24)
+        icon.set_x_align(Clutter.ActorAlign.START)
+
+        const label = new St.Label({
+            y_expand: true,
+            x_align: Clutter.ActorAlign.START,
+            y_align: Clutter.ActorAlign.CENTER,
+            style: "padding-left: 8px"
+        })
+
+        label.text = window.title()
+
+        const container = new St.BoxLayout({
+            y_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        })
+
+        const close_button = new ContainerButton(new St.Icon({
+            icon_name: 'window-close-symbolic',
+            icon_size: 24,
+            y_align: Clutter.ActorAlign.CENTER,
+        }))
+
+        close_button.connect('clicked', () => {
+            window.meta.delete(global.get_current_time())
+        })
+
+        close_button.set_x_align(Clutter.ActorAlign.END)
+        close_button.set_y_align(Clutter.ActorAlign.CENTER)
+
+        container.add_actor(icon)
+        container.add_actor(label)
+        container.add_actor(close_button)
+
+        super._init({
+            child: container,
+            x_expand: true,
+            y_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        })
+
+
+        this._title = label
+    }
+
+    set_title(text: string) {
+        if (this._title) {
+            this._title.text = text
+        }
+    }
+})
+
 export class Stack {
     ext: Ext;
 
@@ -60,9 +136,9 @@ export class Stack {
 
     workspace: number;
 
-    buttons: a.Arena<St.Button> = new Arena();
+    buttons: a.Arena<TabButton> = new Arena();
 
-    tabs_height: number = TAB_HEIGHT;
+    tabs_height: number = 0;
 
     stack_rect: Rectangular = { width: 0, height: 0, x: 0, y: 0 };
 
@@ -79,7 +155,7 @@ export class Stack {
         this.active = active;
         this.monitor = monitor;
         this.workspace = workspace;
-        this.tabs_height = TAB_HEIGHT * this.ext.dpi;
+        this.tabs_height = calculate_tabs_height(ext);
 
         this.widgets = stack_widgets_new();
 
@@ -95,15 +171,9 @@ export class Stack {
         if (!this.widgets) return;
 
         const entity = window.entity;
-        const label = window.title()
         const active = Ecs.entity_eq(entity, this.active);
 
-        const button: St.Button = new St.Button({
-            label,
-            x_expand: true,
-            style_class: active ? ACTIVE_TAB : INACTIVE_TAB
-        });
-
+        const button = new TabButton(window);
         const id = this.buttons.insert(button);
 
         let tab: Tab = { active, entity, signals: [], button: id, button_signal: null };
@@ -154,7 +224,7 @@ export class Stack {
 
         let id = 0;
 
-        for (const component of this.tabs) {
+        for (const [idx, component] of this.tabs.entries()) {
             let name;
 
             this.window_exec(id, component.entity, (window) => {
@@ -178,12 +248,14 @@ export class Stack {
                     if (component.active) {
                         let settings = this.ext.settings;
                         let color_value = settings.hint_color_rgba();
-                        tab_color = `background: ${color_value}; color: ${utils.is_dark(color_value) ? 'white' : 'black'}`;
-
+                        tab_color = `${color_value}; color: ${utils.is_dark(color_value) ? 'white' : 'black'}`;
                     } else {
-                        tab_color = `background: ${INACTIVE_TAB_STYLE}`;
+                        tab_color = `${INACTIVE_TAB_STYLE}`;
                     }
-                    button.set_style(tab_color);
+
+                    const tab_border_radius = this.get_tab_border_radius(idx);
+                    button.set_style(`background: ${tab_color}; border-radius: ${tab_border_radius};`);
+                    button.visible = this.ext.settings.show_stack_tab_buttons();
                 }
             })
 
@@ -191,6 +263,23 @@ export class Stack {
         }
 
         this.reset_visibility(permitted)
+    }
+
+    // returns the tab button border radius based on it's order. 
+    // Only curving the corners on the edges.
+    private get_tab_border_radius(idx: Number): string {
+        let result = `0px 0px 0px 0px`;
+
+        // the minus 4px is to accomodate the inner radius being tighter
+        let radius = Math.max(0, this.ext.settings.active_hint_border_radius() - 4);
+        // only allow a radius up to half the tab_height
+        radius = Math.min(radius, Math.trunc(this.tabs_height / 2));
+        // set each corner's radius based on it's order
+        if (this.tabs.length === 1) result = `${radius}px`;
+        else if (idx === 0) result = `${radius}px 0px 0px ${radius}px`;
+        else if (idx === this.tabs.length - 1) result = `0px ${radius}px ${radius}px 0px`;
+
+        return result;
     }
 
     /** Connects `on_window_changed` callbacks to the newly-active window */
@@ -418,6 +507,9 @@ export class Stack {
         for (const c of this.tabs) {
             if (Ecs.entity_eq(c.entity, entity)) {
                 this.remove_tab_component(c, idx)
+                if (this.active_id > idx) {
+                    this.active_id -= 1
+                }
                 return idx;
             }
             idx += 1;
@@ -440,7 +532,7 @@ export class Stack {
             }
 
             this.watch_signals(this.active_id, c.button, window);
-            this.buttons.get(c.button)?.set_label(window.title());
+            this.buttons.get(c.button)?.set_title(window.title());
             this.activate(window.entity);
         }
     }
@@ -541,7 +633,7 @@ export class Stack {
 
         this.rect = rect;
 
-        this.tabs_height = TAB_HEIGHT * this.ext.dpi;
+        this.tabs_height = calculate_tabs_height(this.ext);
 
         this.stack_rect = {
             x: rect.x,
@@ -595,7 +687,7 @@ export class Stack {
         this.tabs[comp].signals = [
             window.meta.connect('notify::title', () => {
                 this.window_exec(comp, entity, (window) => {
-                    this.buttons.get(button)?.set_label(window.title())
+                    this.buttons.get(button)?.set_title(window.title())
                 });
             }),
 
