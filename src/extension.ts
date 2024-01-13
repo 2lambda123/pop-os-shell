@@ -1002,7 +1002,7 @@ export class Ext extends Ecs.System<ExtEvent> {
             if (!win.is_tilable(this)) {
                 return
             }
-            
+
             mon = win.meta.get_monitor()
             work = win.meta.get_workspace().index()
 
@@ -1895,7 +1895,7 @@ export class Ext extends Ecs.System<ExtEvent> {
                     break;
                 case 'show-stack-tab-buttons':
                     if (!this.auto_tiler) break;
-                    
+
                     for (const [window] of this.auto_tiler.attached.iter()) {
                         const win = this.windows.get(window)
                         if (win)
