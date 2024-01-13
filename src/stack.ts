@@ -265,7 +265,7 @@ export class Stack {
         this.reset_visibility(permitted)
     }
 
-    // returns the tab button border radius based on it's order. 
+    // returns the tab button border radius based on it's order.
     // Only curving the corners on the edges.
     private get_tab_border_radius(idx: Number): string {
         let result = `0px 0px 0px 0px`;

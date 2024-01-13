@@ -590,7 +590,7 @@ export class Tiler {
             Meta.DisplayDirection.DOWN
         ));
     }
- 
+
     move_up(ext: Ext, window?: Entity) {
         this.move(ext, window ?? this.window, 0, -1, 0, 0, Direction.Up, move_window_or_monitor(
             ext,
